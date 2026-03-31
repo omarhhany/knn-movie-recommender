@@ -1,15 +1,19 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import requests
 from sklearn.neighbors import NearestNeighbors
 
 # =========================
-# PAGE CONFIG
+# CONFIG
 # =========================
-st.set_page_config(page_title="AI Movie Recommender", layout="centered")
+
+st.set_page_config(page_title="AI Movie Recommender", layout="wide")
+
+TMDB_API_KEY = "42a72f47065dde345cbcb5418510ddd8"
 
 st.title("🎬 AI Movie Recommender")
-st.markdown("Built using KNN collaborative filtering and cosine similarity")
+st.markdown("KNN-based collaborative filtering with smart recommendations")
 
 # =========================
 # LOAD DATA
@@ -41,7 +45,7 @@ def load_data():
 ratings, movies = load_data()
 
 # =========================
-# USER-MOVIE MATRIX
+# MATRIX + MODEL
 # =========================
 
 user_movie_matrix = ratings.pivot_table(
@@ -50,12 +54,27 @@ user_movie_matrix = ratings.pivot_table(
     values="rating"
 ).fillna(0)
 
-# =========================
-# TRAIN MODEL
-# =========================
-
 model = NearestNeighbors(metric="cosine", algorithm="brute")
 model.fit(user_movie_matrix)
+
+# =========================
+# TMDB POSTER FUNCTION
+# =========================
+
+@st.cache_data
+def get_poster(title):
+    try:
+        url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={title}"
+        data = requests.get(url).json()
+
+        if data["results"]:
+            poster_path = data["results"][0]["poster_path"]
+            if poster_path:
+                return f"https://image.tmdb.org/t/p/w500{poster_path}"
+    except:
+        pass
+
+    return None
 
 # =========================
 # USER INPUT
@@ -64,17 +83,17 @@ model.fit(user_movie_matrix)
 user_id = st.selectbox("Select User ID", user_movie_matrix.index.tolist())
 
 genre_options = [
-    "All", "Action", "Comedy", "Drama", "Romance",
-    "Sci-Fi", "Horror", "Thriller"
+    "All", "Action", "Comedy", "Drama",
+    "Romance", "Sci-Fi", "Horror", "Thriller"
 ]
 
 selected_genre = st.selectbox("Filter by Genre", genre_options)
 
 # =========================
-# RECOMMENDATION FUNCTION
+# RECOMMENDER
 # =========================
 
-def get_recommendations(user_id, k=5):
+def get_recommendations(user_id, k=10):
     user_vector = user_movie_matrix.loc[user_id].values.reshape(1, -1)
 
     distances, indices = model.kneighbors(user_vector, n_neighbors=5)
@@ -85,7 +104,6 @@ def get_recommendations(user_id, k=5):
     user_ids = user_movie_matrix.index.tolist()
     similar_user_ids = [user_ids[i] for i in similar_users]
 
-    # movies already watched
     user_movies = user_movie_matrix.loc[user_id]
     watched_movies = user_movies[user_movies > 0].index.tolist()
 
@@ -98,28 +116,27 @@ def get_recommendations(user_id, k=5):
         similarity_sum += sim
 
     scores = weighted_sum / (similarity_sum + 1e-8)
-
     scores_series = pd.Series(scores, index=user_movie_matrix.columns)
 
-    # remove watched
     scores_series = scores_series.drop(watched_movies)
 
     top_movies = scores_series.sort_values(ascending=False).head(k)
 
     return top_movies, similar_user_ids
 
-
 # =========================
 # BUTTON
 # =========================
 
-if st.button("Recommend Movies"):
+if st.button("🚀 Recommend Movies"):
 
     top_movies, similar_user_ids = get_recommendations(user_id)
 
     st.subheader("🎯 Your Personalized Recommendations")
 
-    for idx, (movie_id, score) in enumerate(top_movies.items(), 1):
+    displayed = 0
+
+    for movie_id, score in top_movies.items():
 
         movie_row = movies[movies["movie_id"] == movie_id]
 
@@ -137,17 +154,34 @@ if st.button("Recommend Movies"):
             if movie_row[selected_genre].values[0] != 1:
                 continue
 
-        # =========================
-        # DISPLAY
-        # =========================
-        st.markdown(f"### {idx}. 🎬 {title}")
-        st.progress(float(score) / 5)
+        poster = get_poster(title)
 
-        st.caption(
-            f"⭐ Score: {score:.2f} | Based on similar users: {similar_user_ids[:2]}"
-        )
+        col1, col2 = st.columns([1, 3])
+
+        with col1:
+            if poster:
+                st.image(poster)
+            else:
+                st.write("🎬")
+
+        with col2:
+            st.markdown(f"### {title}")
+            st.progress(float(score) / 5)
+            st.caption(
+                f"⭐ Score: {score:.2f} | Based on users {similar_user_ids[:2]}"
+            )
 
         st.markdown("---")
+
+        displayed += 1
+        if displayed == 5:
+            break
+
+    # =========================
+    # FALLBACK
+    # =========================
+    if displayed < 5:
+        st.warning("Not enough movies in this genre. Showing best available results.")
 
     # =========================
     # SIMILAR USERS
@@ -156,6 +190,4 @@ if st.button("Recommend Movies"):
         for i, uid in enumerate(similar_user_ids, 1):
             st.write(f"{i}. User {uid}")
 
-    st.info(
-        "This system recommends movies using K-Nearest Neighbors (KNN) based on user similarity."
-    )
+    st.info("Recommendations based on KNN similarity (cosine distance)")
