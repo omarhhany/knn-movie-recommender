@@ -4,9 +4,16 @@ import numpy as np
 from sklearn.neighbors import NearestNeighbors
 
 # =========================
+# PAGE CONFIG
+# =========================
+st.set_page_config(page_title="AI Movie Recommender", layout="centered")
+
+st.title("🎬 AI Movie Recommender")
+st.markdown("KNN-based collaborative filtering using cosine similarity")
+
+# =========================
 # LOAD DATA
 # =========================
-
 @st.cache_data
 def load_data():
     ratings = pd.read_csv(
@@ -30,94 +37,94 @@ def load_data():
 
     return ratings, movies
 
+
 ratings, movies = load_data()
 
 # =========================
-# BUILD MODEL
+# CREATE MATRIX
 # =========================
-
-@st.cache_data
-def build_model(ratings):
-    user_movie_matrix = ratings.pivot_table(
-        index="user_id",
-        columns="movie_id",
-        values="rating"
-    ).fillna(0)
-
-    model = NearestNeighbors(metric="cosine", algorithm="brute")
-    model.fit(user_movie_matrix)
-
-    return user_movie_matrix, model
-
-user_movie_matrix, model = build_model(ratings)
+user_movie_matrix = ratings.pivot_table(
+    index="user_id",
+    columns="movie_id",
+    values="rating"
+).fillna(0)
 
 # =========================
-# RECOMMEND FUNCTION
+# TRAIN MODEL
 # =========================
-
-def recommend_movies(user_id, k=5):
-    user_vector = user_movie_matrix.loc[user_id].values.reshape(1, -1)
-
-    distances, indices = model.kneighbors(user_vector, n_neighbors=5)
-
-    similar_users_idx = indices.flatten()[1:]
-    user_ids = user_movie_matrix.index.tolist()
-    similar_user_ids = [user_ids[i] for i in similar_users_idx]
-
-    similarity_scores = 1 - distances.flatten()[1:]
-
-    weighted_sum = np.zeros(user_movie_matrix.shape[1])
-    similarity_sum = np.zeros(user_movie_matrix.shape[1])
-
-    for i, sim in zip(similar_user_ids, similarity_scores):
-        weighted_sum += sim * user_movie_matrix.loc[i].values
-        similarity_sum += sim
-
-    scores = weighted_sum / (similarity_sum + 1e-8)
-    scores_series = pd.Series(scores, index=user_movie_matrix.columns)
-
-    # remove watched movies
-    watched_movies = user_movie_matrix.loc[user_id]
-    watched_movies = watched_movies[watched_movies > 0].index.tolist()
-    scores_series = scores_series.drop(watched_movies)
-
-    top_movies = scores_series.sort_values(ascending=False).head(k)
-
-    return top_movies, similar_user_ids
+model = NearestNeighbors(metric="cosine", algorithm="brute")
+model.fit(user_movie_matrix)
 
 # =========================
-# UI
+# USER INPUT
 # =========================
-
-st.set_page_config(page_title="AI Movie Recommender", layout="centered")
-
-st.title("🎬 AI Movie Recommender")
-st.markdown("Built using **KNN collaborative filtering** and **cosine similarity**")
-
-st.divider()
-
-# user selection
 user_id = st.selectbox(
     "Select User ID",
-    sorted(user_movie_matrix.index.tolist())[:100]
+    user_movie_matrix.index.tolist()
 )
 
-# button
+# =========================
+# RECOMMEND BUTTON
+# =========================
 if st.button("Recommend Movies"):
-    with st.spinner("Finding best movies for you..."):
-        recommendations, similar_users = recommend_movies(user_id)
 
+    with st.spinner("Finding best movies for you..."):
+
+        # --- Get user vector ---
+        user_vector = user_movie_matrix.loc[user_id].values.reshape(1, -1)
+
+        distances, indices = model.kneighbors(user_vector, n_neighbors=5)
+
+        similar_users = indices.flatten()[1:]
+        similarity_scores = 1 - distances.flatten()[1:]
+
+        user_ids = user_movie_matrix.index.tolist()
+        similar_user_ids = [user_ids[i] for i in similar_users]
+
+        # --- Movies already watched ---
+        user_movies = user_movie_matrix.loc[user_id]
+        watched_movies = user_movies[user_movies > 0].index.tolist()
+
+        # --- Weighted recommendation ---
+        weighted_sum = np.zeros(user_movie_matrix.shape[1])
+        similarity_sum = np.zeros(user_movie_matrix.shape[1])
+
+        for sim_user, sim_score in zip(similar_user_ids, similarity_scores):
+            user_ratings = user_movie_matrix.loc[sim_user].values
+            weighted_sum += sim_score * user_ratings
+            similarity_sum += sim_score
+
+        scores = weighted_sum / (similarity_sum + 1e-8)
+        scores_series = pd.Series(scores, index=user_movie_matrix.columns)
+
+        # Remove watched movies
+        scores_series = scores_series.drop(watched_movies)
+
+        # Top 5
+        top_movies = scores_series.sort_values(ascending=False).head(5)
+
+    # =========================
+    # DISPLAY RESULTS
+    # =========================
     st.subheader("🎯 Your Personalized Recommendations")
 
-    # show similar users
-    st.write("👥 Similar Users:", similar_users)
-
-    st.divider()
-
-    # show recommendations
-    for movie_id, score in recommendations.items():
+    for i, (movie_id, score) in enumerate(top_movies.items(), 1):
         title = movies[movies["movie_id"] == movie_id]["title"].values[0]
-        st.markdown(f"**🎥 {title}**  \n⭐ Rating Score: `{score:.2f}`")
+        st.write(f"🎬 **{i}. {title}** ⭐ ({round(score, 2)})")
 
-    st.divider()
-    st.caption("Built by Omar | AI Engineer Project | KNN Recommender System")
+    st.markdown("---")
+
+    # =========================
+    # OPTIONAL: SHOW SIMILAR USERS
+    # =========================
+    with st.expander("👥 See similar users"):
+        for i, uid in enumerate(similar_user_ids, 1):
+            st.write(f"{i}. User {uid}")
+
+    # =========================
+    # EXPLANATION
+    # =========================
+    st.caption(
+        "This system recommends movies using K-Nearest Neighbors (KNN) "
+        "based on user similarity with cosine distance."
+    )
