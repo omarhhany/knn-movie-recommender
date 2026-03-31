@@ -10,7 +10,7 @@ import requests
 
 st.set_page_config(page_title="AI Movie Recommender", layout="wide")
 
-TMDB_API_KEY = "YOUR_API_KEY_HERE"  # replace with your key
+TMDB_API_KEY = "42a72f47065dde345cbcb5418510ddd8"
 
 # =========================
 # LOAD DATA
